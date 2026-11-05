@@ -6,25 +6,98 @@ module cola_fortran_converter_impl
   private
 
   type, public, extends(AbstractFortranConverter) :: URQMDConverter
-    character(len=512) :: config_file = ''
     real(8)            :: propagate_time = 0.0 
     logical            :: pass_coll = .true.  
+    logical            :: first_conv = .false.  
+    character(len=512) :: input_file = ''
+    character(len=512) :: generated_config_file = ''
+    character(len=512) :: tables_file = ''
   contains
     procedure :: init => converter_init
-    procedure :: convert => converter_convert
+    procedure :: run => converter_run
     final :: converter_final
   end type URQMDConverter
 
   interface
+    function setenv(name, value, overwrite) bind(c)
+      import :: c_int, c_char
+      integer(c_int) :: setenv
+      character(kind=c_char), intent(in) :: name(*), value(*)
+      integer(c_int), value :: overwrite
+    end function
+  end interface
 
-    subroutine urqmd_cola_run_propagation(prop_time, parts_in, parts_out, coll)
-      real(8), intent(in) :: prop_time
-      logical, intent(in) :: coll
-      type(EventData), intent(in) :: parts_in
-      type(EventData), intent(out) :: parts_out 
+  interface
+    subroutine urqmd_cola_uinit()
     end subroutine
 
+    subroutine urqmd_cola_disable_outputs()
+    end subroutine
+
+    subroutine urqmd_cola_generate_tables(tabpath, ok)
+      character(len=*), intent(in) :: tabpath
+      logical, intent(out) :: ok
+    end subroutine
+
+    subroutine urqmd_cola_run_propagation(prop_time, parts_in, parts_out, coll, first)
+      import :: EventParticles
+      real(8), intent(in) :: prop_time
+      logical, intent(in) :: coll, first
+      
+      type(EventParticles), intent(inout) :: parts_in
+      type(EventParticles), intent(inout) :: parts_out
+    end subroutine
+  end interface
+
   contains
+
+  !=============SETUP================
+subroutine urqmd_cola_set_env(name_no_nul, path)
+    character(len=*), intent(in) :: name_no_nul, path
+    character(len=64) :: name
+    character(len=1024) :: path_c
+    integer(c_int) :: ierr
+    name = trim(name_no_nul) // c_null_char
+    path_c = trim(path) // c_null_char
+    ierr = setenv(name, path_c, 1_c_int)
+  end subroutine urqmd_cola_set_env
+
+  logical function is_control_key(key)
+    character(len=*), intent(in) :: key
+    is_control_key = (key == 'config_file' .or. key == 'generated_config_file' .or. key == 'tables_file')
+  end function is_control_key
+
+  subroutine get_tmpdir(tmpdir)
+    character(len=512), intent(out) :: tmpdir
+    integer :: len, status
+    tmpdir = ''
+    call get_environment_variable('TMPDIR', tmpdir, len, status)
+    if (len_trim(tmpdir) == 0) tmpdir = '/tmp'
+  end subroutine get_tmpdir
+
+  subroutine resolve_tables_path(self, path, exists)
+    class(URQMDConverter), intent(in) :: self
+    character(len=512), intent(out) :: path
+    logical, intent(out) :: exists
+    path = ''
+    exists = .false.
+    if (len_trim(self%tables_file) > 0) then
+      path = trim(self%tables_file)
+      inquire(file=trim(path), exist=exists)
+      if (exists) return
+    end if
+    path = 'tables.dat'
+    inquire(file=trim(path), exist=exists)
+  end subroutine resolve_tables_path
+
+  subroutine generate_tables_external(table_path, ok)
+    character(len=*), intent(in) :: table_path
+    logical, intent(out) :: ok
+    call urqmd_cola_set_env('URQMD_TAB', trim(table_path))
+    call urqmd_cola_generate_tables(trim(table_path), ok)
+  end subroutine generate_tables_external
+  !=============SETUP================
+
 
   subroutine converter_init(self, pmap, err)
     class(URQMDConverter), intent(inout) :: self
@@ -32,11 +105,16 @@ module cola_fortran_converter_impl
     character(len=:), allocatable, intent(out) :: err
     type(ParametersMapItem) :: kv
     character(len=:), allocatable :: key, val
-    integer :: i, n
+    character(len=512) :: tmpdir
+    character(len=512) :: tables_path
+    integer :: i, n, iostat, u
+    logical :: tables_ok
+    logical :: first_conv = .true.
 
+    self%input_file = ''
+    self%generated_config_file = ''
+    self%tables_file = ''
     err = ''
-    self%propagate_time = 0.0
-    self%pass_coll = .true.
     n = pmap%size()
 
     do i = 1, n
@@ -45,33 +123,125 @@ module cola_fortran_converter_impl
       val = kv%get_second()
 
       if (key == 'config_file') then
-        self%config_file = trim(val)
-      else if (key == 'propagate_time') then
-        read(val, *, iostat=i) self%propagate_time
+        self%input_file = trim(val)
+      else if (key == 'generated_config_file') then
+        self%generated_config_file = trim(val)
+      else if (key == 'tables_file') then
+        self%tables_file = trim(val)
+      else if (key == 'prop_time') then
+        read(val, *, iostat=iostat) self%propagate_time
+        if (iostat /= 0) then
+          print *, "Error in prop_time reading"
+        endif
+      else if (key == 'first_conv') then
+        read(val, *, iostat=iostat) first_conv
+        if (iostat /= 0) then
+          print *, "Error in first_conv reading"
+        endif
       else if (key == 'coll_to_r0') then
-        self%pass_coll = (trim(val) == 'true')
-      end if
+        read(val, *, iostat=iostat) self%pass_coll
+        if (iostat /= 0) then
+          print *, "Error in coll_to_r0 reading"
+        endif
+      endif
     end do
 
-    err = ''
+    
+    if (.not.first_conv) return
+
+    if (len_trim(self%input_file) == 0) then
+      if (len_trim(self%generated_config_file) == 0) then
+        call get_tmpdir(tmpdir)
+        tmpdir = trim(tmpdir)
+        self%generated_config_file = trim(tmpdir) // '/urqmd_cola_config.txt'
+      end if
+
+      ! Generate UrQMD config file
+      open(newunit=u, file=trim(self%generated_config_file), status='replace', action='write', iostat=iostat)
+      if (iostat /= 0) then
+        err = 'URQMD init failed: failed to create generated config file.'
+        return
+      end if
+      do i = 1, n
+        kv = pmap%get(i)
+        key = kv%get_first()
+        val = kv%get_second()
+        if (is_control_key(key)) cycle
+        write(u, '(a)') trim(key) // ' ' // trim(val)
+      end do
+      write(u, '(a)') 'xxx'
+      close(u)
+      self%input_file = trim(self%generated_config_file)
+    end if
+
+    call urqmd_cola_set_env('ftn09', trim(self%input_file))
+
+    ! Stop UrQMD from writing to files
+    call urqmd_cola_set_env('ftn13', ' ')
+    call urqmd_cola_set_env('ftn14', ' ')
+    call urqmd_cola_set_env('ftn15', ' ')
+    call urqmd_cola_set_env('ftn16', ' ')
+    call urqmd_cola_set_env('ftn19', ' ')
+    call urqmd_cola_set_env('ftn20', ' ')
+
+    call resolve_tables_path(self, tables_path, tables_ok)
+    if (.not. tables_ok) then
+      call generate_tables_external(trim(tables_path), tables_ok)
+      if (tables_ok) then
+        call resolve_tables_path(self, tables_path, tables_ok)
+      end if
+    end if
+    if (.not. tables_ok) then
+      err = 'URQMD init failed: failed to generate tables.dat.'
+      return
+    end if
+    call urqmd_cola_set_env('URQMD_TAB', trim(tables_path))
+    call urqmd_cola_set_env('ftn09', trim(self%input_file))
+
+    call urqmd_cola_uinit()
+    call urqmd_cola_disable_outputs()
   end subroutine converter_init
 
-  function converter_convert(self, data_in, err) result(data_out)
+
+  
+  subroutine converter_run(self, ed, err)
     class(URQMDConverter), intent(in) :: self
-    type(EventData), intent(in) :: data_in
+    type(EventData), intent(inout) :: ed
     character(len=:), allocatable, intent(out) :: err
-    type(EventData) :: data_out
-    type(EventParticles) :: parts_in, parts_out
-    integer :: n_parts
-    character(len=256) :: local_err
+    type(EventParticles) :: parts_in
+    type(EventParticles) :: parts_out
 
-    data_out = data_in  ! Копируем начальные данные (метаинформацию события)
-    parts_in = data_in%get_particles()
+
+    parts_in = ed%get_particles()
+    
     err = ''    
+    parts_out = EventParticles()
 
-    call urqmd_cola_run_propagation(self%propagate_time, parts_in, parts_out, self%pass_coll)
-    call data_out%set_particles(parts_out)
-  end function converter_convert
+    write(6,*) '=== URQMDConverter debug ==='
+    write(6,*) 'parts_in size = ', parts_in%size()
+    write(6,*) 'parts_out size before set = ', parts_out%size()
+
+    call urqmd_cola_run_propagation(self%propagate_time, parts_in, parts_out, self%pass_coll, self%first_conv)
+    
+    !call parts_in%clear()
+    call ed%set_particles(parts_out)
+
+    block
+      type(EventParticles) :: tmp
+      type(Particle) :: tmp2
+      type(LorentzVector) tmp3
+      tmp = ed%get_particles()
+      tmp2 = tmp%get(3)
+      tmp3 = tmp2%get_position()
+      write(6,*) tmp3%get_z()
+      write(6,*) 'parts_out size after set = ', parts_out%size()
+      write(6,*) 'parts_in size after set = ', parts_in%size()
+    end block
+
+    write(6,*) '============================'
+    flush(6)
+
+  end subroutine converter_run
 
   subroutine converter_final(self)
     type(URQMDConverter), intent(inout) :: self

@@ -91,11 +91,17 @@ set(URQMD_F_SOURCES
 )
 
 add_cola_fortran_library(
-    ${COLA_MODULE_NAME} SOURCES urqmd_generator.f90 urqmd_ref.f eosfiles.f90 urqmd_converter.f90 urqmd_ref_conv.f ${URQMD_F_SOURCES}
+    ${COLA_MODULE_NAME} SOURCES urqmd_generator.f90 urqmd_ref.f eosfiles.f90 urqmd_converter.f90 urqmd_ref_conv.f urqmd_storage.f ${URQMD_F_SOURCES}
 )
 # Added converter file
 set_source_files_properties(
     urqmd_ref.f PROPERTIES COMPILE_OPTIONS "-ffixed-form;-ffixed-line-length-120"
+)
+set_source_files_properties(
+    urqmd_ref_conv.f PROPERTIES COMPILE_OPTIONS "-ffixed-form;-ffixed-line-length-120"
+)
+set_source_files_properties(
+    urqmd_storage.f PROPERTIES COMPILE_OPTIONS "-ffixed-form;-ffixed-line-length-120"
 )
 
 target_compile_options(${COLA_MODULE_NAME} PRIVATE -fPIC)

@@ -1,33 +1,68 @@
-        
-        subroutine urqmd_cola_init_particle(parts)
-            use cola
-            implicit none
-            type(EventParticles), intent(inout) :: parts
-            include 'coms.f'
-            include 'options.f'
 
-            do i = 1, nparts
-                one_part = parts%get(i)
-                ! set coords
-                r0(i) = one_part%get_t()
-                rx(i) = one_part%get_x()
-                ry(i) = one_part%get_y()
-                rz(i) = one_part%get_z()
-                ! set momentum
-                p0(i) = one_part%get_e() / 1000
-                px(i) = one_part%get_x() / 1000
-                py(i) = one_part%get_y() / 1000
-                pz(i) = one_part%get_z() / 1000
+      subroutine urqmd_get_uid(uid_out) bind(C, name='urqmd_get_uid')
+         use, intrinsic :: iso_c_binding
+         implicit none
+         include 'coms.f'
 
-                call pdg_to_ityp(one_part%get_pdg_code(), ityp(i), iso3(i))
-                fmass(i) = one_part%get_momentum()%Mag2()
-                uid(i) = one_part%get_uid() ! NO SUCH FUNCTION YET
-            enddo
-            return
-        end
-        
-      subroutine urqmd_cola_file14out_to_parts(timestep, parts, coll_to_r0)
+         integer(c_int), intent(out)       :: uid_out(*)
+
+         integer :: i
+         integer :: cnt
+
+         cnt = npart
+
+         do i = 1, cnt
+            uid_out(i) = int(uid(i), c_int)
+         end do
+
+      end subroutine
+
+
+      subroutine urqmd_cola_init_particles(parts)
+         use cola
+         implicit none
+         
+         type(EventParticles), intent(inout) :: parts
+         type(Particle) :: one_part
+         type(LorentzVector) :: pos, mom
+         integer :: i
+         integer, external :: getspin, fchg
+         include 'coms.f'
+         include 'options.f'
+         
+         npart = parts%size()
+
+         do i = 1, npart
+               one_part = parts%get(i)
+               pos = one_part%get_position()
+               mom = one_part%get_momentum()
+               ! set coords
+               r0(i) = pos%get_t()
+               rx(i) = pos%get_x()
+               ry(i) = pos%get_y()
+               rz(i) = pos%get_z()
+               ! set momentum
+               p0(i) = mom%get_e() / 1000.0
+               px(i) = mom%get_x() / 1000.0
+               py(i) = mom%get_y() / 1000.0
+               pz(i) = mom%get_z() / 1000.0
+               
+               call pdg_to_ityp(one_part%get_pdg_code(), 
+     &                           ityp(i), iso3(i))
+               fmass(i) = sqrt(mom%Mag2()) / 1000.0
+               spin(i) = getspin(ityp(i), -1)
+               charge(i)=fchg(iso3(i),ityp(i))
+               
+                ! one_part%get_uid() ! NO SUCH FUNCTION YET
+               uid_cnt=uid_cnt+1
+         enddo
+         return
+      end
+      
+      subroutine urqmd_cola_file14out_to_parts_conv(timestep,
+     & parts, coll_to_r0)
       use cola
+      use last_event_storage
       implicit none
       integer timestep
       type(EventParticles), intent(inout) :: parts
@@ -36,10 +71,12 @@
       integer i, pdgid, pdg, pclass
       integer urqmd_cola_classify_pclass
       logical, external :: urqmd_cola_build_classification
-      real*8 p0v, pxv, pyv, pzv
+      logical :: coll_to_r0
+      real*8 p0v, pxv, pyv, pzv, last_coll_time
       include 'coms.f'
       include 'options.f'
-
+      include 'freezeout.f'
+      include 'comhis.f'
       if (.not.urqmd_cola_build_classification()) then
          write(6,*) '*** urqmd_cola: build_classification failed'
          return
@@ -51,7 +88,8 @@
          pxv = 1000 * (px(i) + ffermpx(i)) ! to MeV
          pyv = 1000 * (py(i) + ffermpy(i)) ! to MeV
          pzv = 1000 * (pz(i) + ffermpz(i)) ! to MeV
-         pclass = urqmd_cola_classify_pclass(uid(i), pzv, ncoll(i), lstcoll(i))
+         pclass = urqmd_cola_classify_pclass(uid(i), 
+     &         pzv, ncoll(i), lstcoll(i))
          p = Particle()
          call p%set_pdg_code(pdg)
          call p%set_p_class(pclass)
@@ -59,24 +97,34 @@
          call p%set_momentum(mom)
 
          if (coll_to_r0) then
-            pos = LorentzVector(frr0(i), rx(i), ry(i), rz(i))
+            if (lstcoll(i) .gt. 0) then
+               last_coll_time = hisacttime(lstcoll(i))
+            else
+               last_coll_time = 0.d0
+            endif
+            pos = LorentzVector(last_coll_time, rx(i), ry(i), rz(i))
          else
             pos = LorentzVector(r0(i), rx(i), ry(i), rz(i))
          endif
          call p%set_position(pos)
-
+         
          call parts%push_back(p)
+         call set_evolution_essentials
       enddo
       return
       end
 
 
-      subroutine urqmd_cola_run_propagation(prop_time, input_parts, output_parts, coll_to_r0)
+      subroutine urqmd_cola_run_propagation(
+     & prop_time, input_parts, 
+     & output_parts, coll_to_r0, first_conv)
       use cola
+      use last_event_storage
       implicit none
       real*8 prop_time
-      type(EventParticles), intent(inout) :: output_parts, input_parts
-      logical :: coll_to_r0
+      type(EventParticles), intent(inout) :: input_parts
+      type(EventParticles), intent(inout) :: output_parts
+      logical :: coll_to_r0, first_conv
 
       include 'coms.f'
       include 'comres.f'
@@ -86,6 +134,7 @@
       include 'newpart.f'
       include 'boxinc.f'
       include 'freezeout.f'
+      
 
       integer i,j,k,steps,ii,ocharge,ncharge, it1,it2
       real*8 sqrts,otime,xdummy,st
@@ -96,11 +145,18 @@
       integer cti1sav,cti2sav
       real*8 thydro_start,thydro,nucrad
       logical lhydro
-
       
+      output_parts = EventParticles()
+      nct = 0
+      actcol = 0
+      nexit = 0
+      nsav = 0
 
       event = 1
-      time = 0.0
+      if (first_conv) then
+         time = 0.0
+      endif
+      time = acttime
       lhydro = .true.
       nsteps = nint(prop_time / dtimestep)
 
@@ -117,15 +173,18 @@
       bf13 = .false.
 
 !     Init resonance reconstruction (clears comhis for new event)
-      if (.not.bf13.and.CTOption(68).eq.1) then
+      if (.not.bf13.and.CTOption(68).eq.1.and.first_conv) then
        call init_resrec
+       call init_evolution_essentials
+      else
+         call get_evolution_essentials
       endif
 
 !     eccentricity (init sets nuclei; this computes Glauber observables)
-      call init
-      call init_eccentricity
-
-      call urqmd_cola_init_particle(input_parts)
+      !call init
+      !call init_eccentricity
+      call urqmd_cola_init_particles(input_parts)
+      
 
       if (CTOption(40).ne.0 .and. (.not.success)) return
 
@@ -138,7 +197,6 @@
       endif
 
       if (CTOption(40).ne.0) time = acttime
-
 !     output preparation
 
 !      call output(13)
@@ -154,16 +212,15 @@
 
 !     for CTOption(4)=1 : output of initialization configuration
 !      if (CTOption(4).eq.1) call file14out(0)
-      if (CTOption(4).eq.1) call urqmd_cola_file14out_to_parts(0, output_parts, coll_to_r0)
-
+      if (CTOption(4).eq.1) call urqmd_cola_file14out_to_parts_conv(0, output_parts, coll_to_r0)
 !     participant/spectator model
       if (CTOption(28).ne.0) call rmspec(0.5d0*bimp,-(0.5d0*bimp))
 
       otime = outsteps*dtimestep
       steps = 0
-      if (nsteps.eq.0) then
-         call urqmd_cola_file14out_to_parts(0, output_parts, coll_to_r0)
-      endif
+      !if (nsteps.eq.0) then
+      !   call urqmd_cola_file14out_to_parts_conv(0, output_parts, coll_to_r0)
+      !endif
 !     loop over all timesteps
       do steps = 1, nsteps
          if (eos.ne.0) then
@@ -174,7 +231,6 @@
                rz_t(j) = rz(j)
             enddo
          endif
-
          acttime = time
          if (CTOption(16).eq.0) then
             call colload
@@ -189,7 +245,7 @@
                         if (cttime(k).gt.thydro_start .and. lhydro) then
                            if (CTOption(62).eq.1) then
                               call prepout
-                              call urqmd_cola_file14out_to_parts(0, output_parts, coll_to_r0)
+                              call urqmd_cola_file14out_to_parts_conv(0, output_parts, coll_to_r0)
                               call restore
                            endif
                            st = thydro_start - acttime
@@ -271,7 +327,7 @@
             if (CTOption(28).eq.2) call spectrans(otime)
             if (CTOption(62).eq.1) call prepout
 !            call file14out(steps)
-            call urqmd_cola_file14out_to_parts(steps, output_parts, coll_to_r0)
+            call urqmd_cola_file14out_to_parts_conv(steps, output_parts, coll_to_r0)
 !           if (CTOption(64).eq.1) call file13out(steps)
             if (CTOption(62).eq.1) then
                call restore
@@ -306,7 +362,7 @@
 !      call file13out(nsteps)
       if (CTOption(50).eq.0) then
 !       call file14out(nsteps)
-         call urqmd_cola_file14out_to_parts(nsteps, output_parts, coll_to_r0)
+         call urqmd_cola_file14out_to_parts_conv(nsteps, output_parts, coll_to_r0)
       endif
 !      call file16out
 !      if (CTOption(50).eq.0.and.CTOption(55).eq.0) call osc_event
