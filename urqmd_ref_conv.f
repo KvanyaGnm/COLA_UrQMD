@@ -30,31 +30,30 @@
          include 'coms.f'
          include 'options.f'
          
-         npart = parts%size()
+         
 
          do i = 1, npart
-               one_part = parts%get(i)
-               pos = one_part%get_position()
-               mom = one_part%get_momentum()
-               ! set coords
-               r0(i) = pos%get_t()
-               rx(i) = pos%get_x()
-               ry(i) = pos%get_y()
-               rz(i) = pos%get_z()
-               ! set momentum
-               p0(i) = mom%get_e() / 1000.0
-               px(i) = mom%get_x() / 1000.0
-               py(i) = mom%get_y() / 1000.0
-               pz(i) = mom%get_z() / 1000.0
-               
-               call pdg_to_ityp(one_part%get_pdg_code(), 
+            one_part = parts%get(i)
+            pos = one_part%get_position()
+            mom = one_part%get_momentum()
+            ! set coords
+            r0(i) = acttime
+            rx(i) = pos%get_x()
+            ry(i) = pos%get_y()
+            rz(i) = pos%get_z()
+            ! set momentum
+            p0(i) = mom%get_e() / 1000.0
+            px(i) = (mom%get_x() / 1000.0 - ffermpx(i))
+            py(i) = (mom%get_y() / 1000.0 - ffermpy(i))
+            pz(i) = (mom%get_z() / 1000.0 - ffermpz(i))
+            
+            call pdg_to_ityp(one_part%get_pdg_code(), 
      &                           ityp(i), iso3(i))
-               fmass(i) = sqrt(mom%Mag2()) / 1000.0
-               spin(i) = getspin(ityp(i), -1)
-               charge(i)=fchg(iso3(i),ityp(i))
-               
-                ! one_part%get_uid() ! NO SUCH FUNCTION YET
-               uid_cnt=uid_cnt+1
+            fmass(i) = sqrt(mom%Mag2()) / 1000.0
+            spin(i) = getspin(ityp(i), -1)
+            charge(i)=fchg(iso3(i),ityp(i))
+            
+            
          enddo
          return
       end
@@ -109,8 +108,9 @@
          call p%set_position(pos)
          
          call parts%push_back(p)
-         call set_evolution_essentials
+
       enddo
+      call set_evolution_essentials
       return
       end
 
@@ -146,19 +146,8 @@
       real*8 thydro_start,thydro,nucrad
       logical lhydro
       
-      output_parts = EventParticles()
-      nct = 0
-      actcol = 0
-      nexit = 0
-      nsav = 0
+      npart = input_parts%size()
 
-      event = 1
-      if (first_conv) then
-         time = 0.0
-      endif
-      time = acttime
-      lhydro = .true.
-      nsteps = nint(prop_time / dtimestep)
 
 !     initialize random number generator (per event)
       if (.not.firstseed .and. (.not.fixedseed)) then
@@ -167,18 +156,33 @@
       else
          firstseed = .false.
       endif
-
 !     Enable collision history (comhis) for file15-like classification.
       CTOption(68) = 1
       bf13 = .false.
 
 !     Init resonance reconstruction (clears comhis for new event)
       if (.not.bf13.and.CTOption(68).eq.1.and.first_conv) then
-       call init_resrec
-       call init_evolution_essentials
+         call init_resrec
+         call init_evolution_essentials
       else
          call get_evolution_essentials
       endif
+
+      if(prop_time.gt.0.0) then
+         dtimestep = prop_time
+         nsteps = nint(0.01 + prop_time / dtimestep)
+         outsteps = nint(0.01 + prop_time / dtimestep)
+      else
+         dtimestep = 0.0
+         nsteps = 0
+         outsteps = 0
+      endif
+
+      event = 1
+      if (first_conv) time = 0.0
+      time = acttime
+      lhydro = .true.
+      
 
 !     eccentricity (init sets nuclei; this computes Glauber observables)
       !call init
@@ -222,6 +226,7 @@
       !   call urqmd_cola_file14out_to_parts_conv(0, output_parts, coll_to_r0)
       !endif
 !     loop over all timesteps
+
       do steps = 1, nsteps
          if (eos.ne.0) then
             do j = 1, npart

@@ -46,6 +46,7 @@
          call p%set_position(pos)
          call ini_parts%push_back(p)
          pza = pza + 1000.d0 * (pz(i) + ffermpz(i))
+
       enddo
       do i = npproj + 1, npart
          pdg = pdgid(ityp(i), iso3(i))
@@ -61,6 +62,8 @@
          call p%set_position(pos)
          call ini_parts%push_back(p)
          pzb = pzb + 1000.d0 * (pz(i) + ffermpz(i))
+
+         
       enddo
       return
       end
@@ -311,6 +314,7 @@
          pos = LorentzVector(r0(i), rx(i), ry(i), rz(i))
          call p%set_position(pos)
          call parts%push_back(p)
+
       enddo
       return
       end

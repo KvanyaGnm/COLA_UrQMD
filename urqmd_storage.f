@@ -5,6 +5,7 @@
             include 'comhis.f'
             include 'colltab.f'
             include 'freezeout.f'
+            include 'options.f'
             private
             
             public :: set_evolution_essentials, 
@@ -16,6 +17,7 @@
      &          ctag=0, dectag=0, NHardRes=0, NSoftRes=0,
      &          NDecRes=0, NBlColl=0,
      &          NElColl=0, origin(nmax)
+            logical :: firstseed, fixedseed
             
             real*8 :: frr0(nmax), frrx(nmax), frry(nmax), frrz(nmax),
      &          frp0(nmax), frpx(nmax), frpy(nmax), frpz(nmax),
@@ -29,8 +31,7 @@
             end type event_vars
 
             type(event_vars) :: instance_
-            !$OMP THREADPRIVATE(instance_)
-
+            !$omp threadprivate(instance_)
             contains
 
             subroutine set_evolution_essentials()
@@ -49,27 +50,30 @@
                 instance_%acttime   = acttime
                 
                 ! Integer Arrays
-                instance_%origin    = origin
-                instance_%ncoll     = ncoll
-                instance_%lstcoll   = lstcoll
-                instance_%uid       = uid
-                
+                instance_%origin(1:npart)    = origin(1:npart)
+                instance_%ncoll(1:npart)     = ncoll(1:npart)
+                instance_%lstcoll(1:npart)   = lstcoll(1:npart)
+                instance_%uid(1:npart)       = uid(1:npart)
+
+                instance_%firstseed          = firstseed
+                instance_%fixedseed          = fixedseed
+
                 ! Real*8 Arrays
-                instance_%frr0      = frr0
-                instance_%frrx      = frrx
-                instance_%frry      = frry
-                instance_%frrz      = frrz
-                instance_%frp0      = frp0
-                instance_%frpx      = frpx
-                instance_%frpy      = frpy
-                instance_%frpz      = frpz
-                instance_%dectime    = dectime
-                instance_%tform     = tform
-                instance_%xtotfac   = xtotfac
-                instance_%ffermpx   = ffermpx
-                instance_%ffermpy   = ffermpy
-                instance_%ffermpz   = ffermpz
-                instance_%hisacttime = hisacttime
+                instance_%frr0(1:npart)      = frr0(1:npart)
+                instance_%frrx(1:npart)      = frrx(1:npart)
+                instance_%frry(1:npart)      = frry(1:npart)
+                instance_%frrz(1:npart)      = frrz(1:npart)
+                instance_%frp0(1:npart)      = frp0(1:npart)
+                instance_%frpx(1:npart)      = frpx(1:npart)
+                instance_%frpy(1:npart)      = frpy(1:npart)
+                instance_%frpz(1:npart)      = frpz(1:npart)
+                instance_%dectime(1:npart)    = dectime(1:npart)
+                instance_%tform(1:npart)     = tform(1:npart)
+                instance_%xtotfac(1:npart)   = xtotfac(1:npart)
+                instance_%ffermpx(1:npart)   = ffermpx(1:npart)
+                instance_%ffermpy(1:npart)   = ffermpy(1:npart)
+                instance_%ffermpz(1:npart)   = ffermpz(1:npart)
+                instance_%hisacttime(1:npart) = hisacttime(1:npart)
             end subroutine set_evolution_essentials
 
 
@@ -88,27 +92,30 @@
                 NElColl   = instance_%NElColl
                 acttime   = instance_%acttime
                 ! Integer Arrays
-                origin    = instance_%origin
-                ncoll     = instance_%ncoll
-                lstcoll   = instance_%lstcoll
-                uid       = instance_%uid
+                origin(1:npart)    = instance_%origin(1:npart)
+                ncoll(1:npart)     = instance_%ncoll(1:npart)
+                lstcoll(1:npart)   = instance_%lstcoll(1:npart)
+                uid(1:npart)       = instance_%uid(1:npart)
                 
+                firstseed          = instance_%firstseed
+                fixedseed          = instance_%fixedseed
+
                 ! Real*8 Arrays
-                frr0      = instance_%frr0
-                frrx      = instance_%frrx
-                frry      = instance_%frry
-                frrz      = instance_%frrz
-                frp0      = instance_%frp0
-                frpx      = instance_%frpx
-                frpy      = instance_%frpy
-                frpz      = instance_%frpz
-                dectime    = instance_%dectime
-                tform     = instance_%tform
-                xtotfac   = instance_%xtotfac
-                ffermpx   = instance_%ffermpx
-                ffermpy   = instance_%ffermpy
-                ffermpz   = instance_%ffermpz
-                hisacttime = instance_%hisacttime
+                frr0(1:npart)      = instance_%frr0(1:npart)
+                frrx(1:npart)      = instance_%frrx(1:npart)
+                frry(1:npart)      = instance_%frry(1:npart)
+                frrz(1:npart)      = instance_%frrz(1:npart)
+                frp0(1:npart)      = instance_%frp0(1:npart)
+                frpx(1:npart)      = instance_%frpx(1:npart)
+                frpy(1:npart)      = instance_%frpy(1:npart)
+                frpz(1:npart)      = instance_%frpz(1:npart)
+                dectime(1:npart)    = instance_%dectime(1:npart)
+                tform(1:npart)     = instance_%tform(1:npart)
+                xtotfac(1:npart)   = instance_%xtotfac(1:npart)
+                ffermpx(1:npart)   = instance_%ffermpx(1:npart)
+                ffermpy(1:npart)   = instance_%ffermpy(1:npart)
+                ffermpz(1:npart)   = instance_%ffermpz(1:npart)
+                hisacttime(1:npart) = instance_%hisacttime(1:npart)
             end subroutine get_evolution_essentials
 
 
@@ -131,6 +138,9 @@
                 instance_%ncoll     = 0
                 instance_%lstcoll   = 0
                 instance_%uid       = 0
+                
+                instance_%firstseed = .true.
+                instance_%fixedseed = .true.
                 
                 ! Clear Real*8 Arrays
                 instance_%frr0      = 0.0D0
