@@ -39,13 +39,16 @@ module cola_fortran_converter_impl
       logical, intent(out) :: ok
     end subroutine
 
-    subroutine urqmd_cola_run_propagation(prop_time, parts_in, parts_out, coll, first)
+    subroutine urqmd_cola_run_propagation(prop_time, ini, parts_in, parts_out, coll, first)
       import :: EventParticles
+      import :: EventIniState
       real(8), intent(in) :: prop_time
       logical, intent(in) :: coll, first
       
       type(EventParticles), intent(inout) :: parts_in
       type(EventParticles), intent(inout) :: parts_out
+      type(EventIniState), intent(inout) :: ini
+       
     end subroutine
   end interface
 
@@ -109,7 +112,6 @@ subroutine urqmd_cola_set_env(name_no_nul, path)
     character(len=512) :: tables_path
     integer :: i, n, iostat, u
     logical :: tables_ok
-    logical :: first_conv = .true.
 
     self%input_file = ''
     self%generated_config_file = ''
@@ -122,11 +124,11 @@ subroutine urqmd_cola_set_env(name_no_nul, path)
       key = kv%get_first()
       val = kv%get_second()
 
-      ! if (key == 'config_file') then
-      !   self%input_file = trim(val)
-      ! else if (key == 'generated_config_file') then
-      !   self%generated_config_file = trim(val)
-      if (key == 'tables_file') then
+      if (key == 'config_file') then
+         self%input_file = trim(val)
+      else if (key == 'generated_config_file') then
+         self%generated_config_file = trim(val)
+      else if (key == 'tables_file') then
         self%tables_file = trim(val)
       else if (key == 'prop_time') then
         read(val, *, iostat=iostat) self%propagate_time
@@ -134,7 +136,7 @@ subroutine urqmd_cola_set_env(name_no_nul, path)
           print *, "Error in prop_time reading"
         endif
       else if (key == 'first_conv') then
-        read(val, *, iostat=iostat) first_conv
+        read(val, *, iostat=iostat) self%first_conv
         if (iostat /= 0) then
           print *, "Error in first_conv reading"
         endif
@@ -147,33 +149,33 @@ subroutine urqmd_cola_set_env(name_no_nul, path)
     end do
 
     
-    if (.not.first_conv) return
-    ! if (len_trim(self%input_file) == 0) then
-    !   if (len_trim(self%generated_config_file) == 0) then
-    !     call get_tmpdir(tmpdir)
-    !     tmpdir = trim(tmpdir)
-    !     self%generated_config_file = trim(tmpdir) // '/urqmd_cola_config.txt'
-    !   end if
+    if (.not.self%first_conv) return
+    if (len_trim(self%input_file) == 0) then
+      if (len_trim(self%generated_config_file) == 0) then
+        call get_tmpdir(tmpdir)
+        tmpdir = trim(tmpdir)
+        self%generated_config_file = trim(tmpdir) // '/urqmd_cola_config.txt'
+      end if
 
-    !   ! Generate UrQMD config file
-    !   open(newunit=u, file=trim(self%generated_config_file), status='replace', action='write', iostat=iostat)
-    !   if (iostat /= 0) then
-    !     err = 'URQMD init failed: failed to create generated config file.'
-    !     return
-    !   end if
-    !   do i = 1, n
-    !     kv = pmap%get(i)
-    !     key = kv%get_first()
-    !     val = kv%get_second()
-    !     if (is_control_key(key)) cycle
-    !     write(u, '(a)') trim(key) // ' ' // trim(val)
-    !   end do
-    !   write(u, '(a)') 'xxx'
-    !   close(u)
-    !   self%input_file = trim(self%generated_config_file)
-    ! end if
+      ! Generate UrQMD config file
+      open(newunit=u, file=trim(self%generated_config_file), status='replace', action='write', iostat=iostat)
+      if (iostat /= 0) then
+        err = 'URQMD init failed: failed to create generated config file.'
+        return
+      end if
+      do i = 1, n
+        kv = pmap%get(i)
+        key = kv%get_first()
+        val = kv%get_second()
+        if (is_control_key(key)) cycle
+        write(u, '(a)') trim(key) // ' ' // trim(val)
+      end do
+      write(u, '(a)') 'xxx'
+      close(u)
+      self%input_file = trim(self%generated_config_file)
+    end if
 
-    ! call urqmd_cola_set_env('ftn09', trim(self%input_file))
+    call urqmd_cola_set_env('ftn09', trim(self%input_file))
     ! Stop UrQMD from writing to files
     call urqmd_cola_set_env('ftn13', ' ')
     call urqmd_cola_set_env('ftn14', ' ')
@@ -194,7 +196,7 @@ subroutine urqmd_cola_set_env(name_no_nul, path)
       return
     end if
     call urqmd_cola_set_env('URQMD_TAB', trim(tables_path))
-    !call urqmd_cola_set_env('ftn09', trim(self%input_file))
+    call urqmd_cola_set_env('ftn09', trim(self%input_file))
 
     call urqmd_cola_uinit()
     call urqmd_cola_disable_outputs()
@@ -208,13 +210,13 @@ subroutine urqmd_cola_set_env(name_no_nul, path)
     character(len=:), allocatable, intent(out) :: err
     type(EventParticles) :: parts_in
     type(EventParticles) :: parts_out
-
+    type(EventIniState) :: ini
 
     parts_in = ed%get_particles()
-    
+    ini = ed%get_ini_state()
     err = ''    
     parts_out = EventParticles()
-    call urqmd_cola_run_propagation(self%propagate_time, parts_in, parts_out, self%pass_coll, self%first_conv)
+    call urqmd_cola_run_propagation(self%propagate_time, ini, parts_in, parts_out, self%pass_coll, self%first_conv)
     
     call ed%set_particles(parts_out)
 

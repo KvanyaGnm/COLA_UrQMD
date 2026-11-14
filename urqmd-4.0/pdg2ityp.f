@@ -1,4 +1,4 @@
-          subroutine pdg_to_ityp(pdg_in, ityp_out, iso3_out)
+      subroutine pdg_to_ityp(pdg_in, ityp_out, iso3_out)
 
           implicit none
           include 'comres.f'
@@ -11,26 +11,31 @@
           parameter (TAB_SIZE = 181)
 
           integer idtab(3, TAB_SIZE)
-          integer i
-          logical found_exact
-          logical found_modulo
-           
+          integer sort_pdg(TAB_SIZE), sort_orig(TAB_SIZE)
+          logical initialized
+          save sort_pdg, sort_orig, initialized
+          data initialized /.false./
+
+          integer abs_pdg, lo, hi, mid, i, j
+          integer tmp_p, tmp_o, ityp_try, iso3_try
+          integer, external :: isoit
+
           data idtab/
 c Neutron
-     .       1, -1,  2112,  
+     .       1, -1,  2112,
 c Proton
      .       1,  1,  2212,
 c N*
      .       2, -1, 12112,        2,  1, 12212,
-     .       3, -1,  1214,        3,  1,  2124, 
+     .       3, -1,  1214,        3,  1,  2124,
      .       4, -1, 22112,        4,  1, 22212,
      .       5, -1, 32112,        5,  1, 32212,
      .       6, -1,  2116,        6,  1,  2216,
      .       7, -1, 12116,        7,  1, 12216,
      .       8, -1, 21214,        8,  1, 22124,
-     .       9, -1, 42112,        9,  1, 42212, 
-     .      10, -1, 31214,       10,  1, 32124, 
-     .      14, -1,  1218,       14,  1,  2128, 
+     .       9, -1, 42112,        9,  1, 42212,
+     .      10, -1, 31214,       10,  1, 32124,
+     .      14, -1,  1218,       14,  1,  2128,
      .      23, -1,  1218,       23,  1,  2128,
 c Delta
      .      24, -3,  1114,  24, -1,  2114,  24, 1,  2214,  24, 3,  2224,
@@ -46,18 +51,18 @@ c Delta
      .      40, -3,  1118,  40, -1,  2118,  40, 1,  2218,  40, 3,  2228,
 c Lambda
      .      41,  0,  3122,
-     .      42,  0, 13122,   
-     .      43,  0,  3124,   
-     .      44,  0, 23122,   
+     .      42,  0, 13122,
+     .      43,  0,  3124,
+     .      44,  0, 23122,
      .      45,  0, 33122,
      .      46,  0, 13124,
-     .      47,  0, 43122,   
-     .      48,  0, 53122,   
-     .      49,  0,  3126,   
-     .      50,  0, 13126,   
-     .      51,  0, 23124,   
-     .      52,  0,  3128,   
-     .      53,  0, 23126,   
+     .      47,  0, 43122,
+     .      48,  0, 53122,
+     .      49,  0,  3126,
+     .      50,  0, 13126,
+     .      51,  0, 23124,
+     .      52,  0,  3128,
+     .      53,  0, 23126,
 c Sigma
      .      54, -2,  3112,    54,  0,  3212,    54,  2,  3222,
      .      55, -2,  3114,    55,  0,  3214,    55,  2,  3224,
@@ -77,7 +82,7 @@ c Omega
 c  Lambda_C
      .      70,  0,  4122,
 c gamma
-     .     100,  0,    22, 
+     .     100,  0,    22,
 c pion
      .     101, -2,  -211,    101,  0,   111,    101,  2,   211,
 c eta
@@ -138,12 +143,12 @@ c rho(1700)
      .     130, -2,-30213,    130,  0, 30113,    130,  2, 30213,
 c omega(1600)
      .     131,  0, 60223,
-c phi(1850)     
+c phi(1850)
      .     132,  0,   337,
 c D
-     .     133,  -1,   421,    133,   1,   411,  
+     .     133,  -1,   421,    133,   1,   411,
 c D*
-     .     134,  -1, 10421,    134,   1, 10411,  
+     .     134,  -1, 10421,    134,   1, 10411,
 c J/Psi
      .     135,  0, 443,
 c Chi_c
@@ -151,45 +156,106 @@ c Chi_c
 c Psi'
      .     137,  0, 100443,
 c Ds
-     .     138,   0,   431,  
+     .     138,   0,   431,
 c Ds*
      .     139,   0,   433 /
 
-
           ityp_out = 0
           iso3_out = 0
-          found_exact = .false.
-          found_modulo = .false.
-
-          do i = 1, TAB_SIZE
-          if (idtab(3, i) .eq. pdg_in) then
-               ityp_out = idtab(1, i)
-               iso3_out = idtab(2, i)
+          if (pdg_in .eq. 0) then
+               ityp_out = 11
+               iso3_out = 1
                return
           endif
+          if (.not. initialized) then
+             do i = 1, TAB_SIZE
+                sort_pdg(i)  = abs(idtab(3, i))
+                sort_orig(i) = i
+             enddo
+             do i = 2, TAB_SIZE
+                tmp_p = sort_pdg(i)
+                tmp_o = sort_orig(i)
+                j = i - 1
+                do while (j .ge. 1)
+                   if (sort_pdg(j) .gt. tmp_p) then
+                      sort_pdg(j+1)  = sort_pdg(j)
+                      sort_orig(j+1) = sort_orig(j)
+                      j = j - 1
+                   elseif ((sort_pdg(j) .eq. tmp_p) .and.
+     &                     (idtab(1, sort_orig(j)) .gt.
+     &                      idtab(1, tmp_o))) then
+                      sort_pdg(j+1)  = sort_pdg(j)
+                      sort_orig(j+1) = sort_orig(j)
+                      j = j - 1
+                   else
+                      exit
+                   endif
+                enddo
+                sort_pdg(j+1)  = tmp_p
+                sort_orig(j+1) = tmp_o
+             enddo
+             initialized = .true.
+          endif
+
+c-------------------------------------------------------------------
+c  Binary search for |pdg|
+c-------------------------------------------------------------------
+          abs_pdg = abs(pdg_in)
+          lo = 1
+          hi = TAB_SIZE
+          mid = 0
+          do while (lo .le. hi)
+             mid = (lo + hi) / 2
+             if (sort_pdg(mid) .lt. abs_pdg) then
+                lo = mid + 1
+             elseif (sort_pdg(mid) .gt. abs_pdg) then
+                hi = mid - 1
+             else
+                exit
+             endif
+          enddo
+          if (sort_pdg(mid) .ne. abs_pdg) goto 200
+
+c  walk back to the first entry with this |pdg|
+          do while (mid .gt. 1)
+             if (sort_pdg(mid-1) .eq. abs_pdg) then
+                mid = mid - 1
+             else
+                exit
+             endif
+          enddo
+
+
+          do i = mid, TAB_SIZE
+             if (sort_pdg(i) .ne. abs_pdg) exit
+             if (idtab(3, sort_orig(i)) .eq. pdg_in) then
+                ityp_out = idtab(1, sort_orig(i))
+                iso3_out = idtab(2, sort_orig(i))
+                return
+             endif
           enddo
 
 
           if (pdg_in .lt. 0) then
-          do i = 1, TAB_SIZE
-               if (idtab(3, i) .eq. abs(pdg_in)) then
-                    
-                    if (idtab(1, i) .lt. 100) then
-                    ityp_out = -idtab(1, i)
-                    iso3_out = -idtab(2, i)
-                    else
-
-                    ityp_out = -idtab(1, i)
-                    iso3_out = -idtab(2, i)
-                    endif
-                    return
-               endif
-          enddo
+             do i = mid, TAB_SIZE
+                if (sort_pdg(i) .ne. abs_pdg) exit
+                if (idtab(3, sort_orig(i)) .eq. abs_pdg) then
+                   ityp_try = idtab(1, sort_orig(i))
+                   iso3_try = idtab(2, sort_orig(i))
+                   if ((ityp_try .ge. minmes) .and.
+     &                 (mod(isoit(ityp_try), 2) .eq. 0)) cycle
+                   ityp_out = -ityp_try
+                   iso3_out = -iso3_try
+                   return
+                endif
+             enddo
           endif
 
-
-          ityp_out = sign(1, pdg_in) * (abs(pdg_in) + 1000)
+c-------------------------------------------------------------------
+c  unknown PDG, encode as |pdg|+1000
+c-------------------------------------------------------------------
+ 200      continue
+          ityp_out = sign(1, pdg_in) * (abs_pdg + 1000)
           iso3_out = 0
-
           return
           end

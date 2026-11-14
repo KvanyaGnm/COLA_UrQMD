@@ -1,23 +1,4 @@
 
-      subroutine urqmd_get_uid(uid_out) bind(C, name='urqmd_get_uid')
-         use, intrinsic :: iso_c_binding
-         implicit none
-         include 'coms.f'
-
-         integer(c_int), intent(out)       :: uid_out(*)
-
-         integer :: i
-         integer :: cnt
-
-         cnt = npart
-
-         do i = 1, cnt
-            uid_out(i) = int(uid(i), c_int)
-         end do
-
-      end subroutine
-
-
       subroutine urqmd_cola_init_particles(parts)
          use cola
          implicit none
@@ -48,9 +29,9 @@
             pz(i) = (mom%get_z() / 1000.0 - ffermpz(i))
             
             call pdg_to_ityp(one_part%get_pdg_code(), 
-     &                           ityp(i), iso3(i))
+     &                    ityp(i), iso3(i))
             fmass(i) = sqrt(mom%Mag2()) / 1000.0
-            spin(i) = getspin(ityp(i), -1)
+            !spin(i) = getspin(ityp(i), -1)
             charge(i)=fchg(iso3(i),ityp(i))
             
             
@@ -80,13 +61,12 @@
          write(6,*) '*** urqmd_cola: build_classification failed'
          return
       endif
-
       do i = 1, npart
          pdg = pdgid(ityp(i), iso3(i))
-         p0v = 1000 * p0(i) ! to MeV
-         pxv = 1000 * (px(i) + ffermpx(i)) ! to MeV
-         pyv = 1000 * (py(i) + ffermpy(i)) ! to MeV
-         pzv = 1000 * (pz(i) + ffermpz(i)) ! to MeV
+         p0v = 1000.0 * p0(i) ! to MeV
+         pxv = 1000.0 * (px(i) + ffermpx(i)) ! to MeV
+         pyv = 1000.0 * (py(i) + ffermpy(i)) ! to MeV
+         pzv = 1000.0 * (pz(i) + ffermpz(i)) ! to MeV
          pclass = urqmd_cola_classify_pclass(uid(i), 
      &         pzv, ncoll(i), lstcoll(i))
          p = Particle()
@@ -115,8 +95,22 @@
       end
 
 
+      subroutine pdg_to_az(pdg_in, A, Z)
+      implicit none
+      integer, intent(in)  :: pdg_in
+      integer, intent(out) :: A, Z
+      integer :: k
+      A = 0;  Z = 0
+      if (pdg_in == 2112) then; A=1; Z=0; return; end if
+      if (pdg_in == 2212) then; A=1; Z=1; return; end if
+      k = abs(pdg_in) / 10
+      Z = mod(k,10) + mod(k/10,10)*10 + mod(k/100,10)*100
+      k = k / 1000
+      A = mod(k,10) + mod(k/10,10)*10 + mod(k/100,10)*100
+      end subroutine
+
       subroutine urqmd_cola_run_propagation(
-     & prop_time, input_parts, 
+     & prop_time, ini, input_parts, 
      & output_parts, coll_to_r0, first_conv)
       use cola
       use last_event_storage
@@ -124,6 +118,8 @@
       real*8 prop_time
       type(EventParticles), intent(inout) :: input_parts
       type(EventParticles), intent(inout) :: output_parts
+      type(EventIniState), intent(inout) :: ini
+      type(AZ) :: AZp, AZt
       logical :: coll_to_r0, first_conv
 
       include 'coms.f'
@@ -145,42 +141,58 @@
       integer cti1sav,cti2sav
       real*8 thydro_start,thydro,nucrad
       logical lhydro
-      
+
       npart = input_parts%size()
+      call pdg_to_az(ini%get_pdg_code_a(), Ap, Zp)
+      call pdg_to_az(ini%get_pdg_code_b(), At, Zt)
 
-
+      
 !     initialize random number generator (per event)
-      if (.not.firstseed .and. (.not.fixedseed)) then
-         ranseed = -(1*abs(ranseed))
-         call sseed(ranseed)
-      else
-         firstseed = .false.
+      if (first_conv) then
+         if (.not.firstseed .and. (.not.fixedseed)) then
+            ranseed = -(1*abs(ranseed))
+            call sseed(ranseed)
+         else
+            firstseed = .false.
+         endif
+
+         call init_resrec
+         call init_evolution_essentials
       endif
+      call get_evolution_essentials
 !     Enable collision history (comhis) for file15-like classification.
       CTOption(68) = 1
       bf13 = .false.
 
+!     Disable coalescence
+      CTOption(64) = 0
+
+!     Disable final decay
+      CTOption(18) = 1
+
 !     Init resonance reconstruction (clears comhis for new event)
-      if (.not.bf13.and.CTOption(68).eq.1.and.first_conv) then
+      if (.not.bf13.and.CTOption(68).eq.1) then
          call init_resrec
-         call init_evolution_essentials
-      else
-         call get_evolution_essentials
       endif
 
+
       if(prop_time.gt.0.0) then
+         !dtimestep = prop_time
          dtimestep = prop_time
          nsteps = nint(0.01 + prop_time / dtimestep)
          outsteps = nint(0.01 + prop_time / dtimestep)
       else
-         dtimestep = 0.0
+         dtimestep = 0.2
          nsteps = 0
          outsteps = 0
       endif
 
       event = 1
-      if (first_conv) time = 0.0
-      time = acttime
+      if (first_conv) then
+         time = 0.0
+      else 
+         time = acttime
+      endif
       lhydro = .true.
       
 
@@ -188,7 +200,6 @@
       !call init
       !call init_eccentricity
       call urqmd_cola_init_particles(input_parts)
-      
 
       if (CTOption(40).ne.0 .and. (.not.success)) return
 
