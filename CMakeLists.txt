@@ -99,16 +99,11 @@ add_cola_fortran_library(
     urqmd_converter.f90
     urqmd_ref_conv.f
     urqmd_storage.f
-    urqmd_bridge.f
     ${URQMD_F_SOURCES}
 )
 # Added converter file
 set_source_files_properties(
     urqmd_ref.f PROPERTIES COMPILE_OPTIONS "-ffixed-form;-ffixed-line-length-120"
-)
-
-set_source_files_properties(
-    urqmd_bridge.f PROPERTIES COMPILE_OPTIONS "-ffixed-form;-ffixed-line-length-120"
 )
 
 set_source_files_properties(
